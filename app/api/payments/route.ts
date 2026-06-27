@@ -12,6 +12,7 @@ import {
 } from '@/lib/payments/escrow-service'
 import { paymentPostBodySchema } from '@/lib/payments/payment-validators'
 import { validateRequest, formatZodErrors } from '@/lib/validators'
+import { getCachedResponse, cacheResponse } from '@/lib/payments/idempotency'
 
 export const runtime = 'nodejs'
 
@@ -32,6 +33,19 @@ export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const idempotencyKey = request.headers.get('Idempotency-Key')
+  if (!idempotencyKey) {
+    return NextResponse.json(
+      { error: 'Missing Idempotency-Key header' },
+      { status: 400 },
+    )
+  }
+
+  const cached = getCachedResponse(idempotencyKey)
+  if (cached) {
+    return NextResponse.json(cached.body, { status: cached.status })
   }
 
   let body: unknown
@@ -86,13 +100,15 @@ export async function POST(request: NextRequest) {
 
     attachPaymentIntent(escrow.id, pi.id)
 
-    return NextResponse.json({
+    const responseBody = {
       escrowId: escrow.id,
       clientSecret: pi.client_secret,
       publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? null,
       amountCents: data.amountCents,
       currency: data.currency,
-    })
+    }
+    cacheResponse(idempotencyKey, 200, responseBody)
+    return NextResponse.json(responseBody)
   }
 
   if (data.type === 'subscription') {
@@ -114,7 +130,9 @@ export async function POST(request: NextRequest) {
       metadata: { userId: session.user.id },
     })
 
-    return NextResponse.json({ url: sessionCheckout.url })
+    const responseBody = { url: sessionCheckout.url }
+    cacheResponse(idempotencyKey, 200, responseBody)
+    return NextResponse.json(responseBody)
   }
 
   if (data.type === 'escrow_release') {
@@ -138,7 +156,9 @@ export async function POST(request: NextRequest) {
 
     if (!isStripeConfigured()) {
       markReleased(escrow.id)
-      return NextResponse.json({ ok: true, escrow: getEscrow(escrow.id), mode: 'simulated' })
+      const responseBody = { ok: true, escrow: getEscrow(escrow.id), mode: 'simulated' }
+      cacheResponse(idempotencyKey, 200, responseBody)
+      return NextResponse.json(responseBody)
     }
 
     const stripe = getStripe()
@@ -152,7 +172,9 @@ export async function POST(request: NextRequest) {
         : undefined
     markReleased(escrow.id, receiptUrl)
 
-    return NextResponse.json({ ok: true, escrow: getEscrow(escrow.id), receiptUrl })
+    const responseBody = { ok: true, escrow: getEscrow(escrow.id), receiptUrl }
+    cacheResponse(idempotencyKey, 200, responseBody)
+    return NextResponse.json(responseBody)
   }
 
   if (data.type === 'escrow_refund') {
@@ -170,12 +192,16 @@ export async function POST(request: NextRequest) {
 
     if (!isStripeConfigured()) {
       markRefunded(escrow.id)
-      return NextResponse.json({ ok: true, escrow: getEscrow(escrow.id), mode: 'simulated' })
+      const responseBody = { ok: true, escrow: getEscrow(escrow.id), mode: 'simulated' }
+      cacheResponse(idempotencyKey, 200, responseBody)
+      return NextResponse.json(responseBody)
     }
 
     if (!escrow.paymentIntentId) {
       markRefunded(escrow.id)
-      return NextResponse.json({ ok: true, escrow: getEscrow(escrow.id) })
+      const responseBody = { ok: true, escrow: getEscrow(escrow.id) }
+      cacheResponse(idempotencyKey, 200, responseBody)
+      return NextResponse.json(responseBody)
     }
 
     const stripe = getStripe()
@@ -190,7 +216,9 @@ export async function POST(request: NextRequest) {
     }
 
     markRefunded(escrow.id)
-    return NextResponse.json({ ok: true, escrow: getEscrow(escrow.id) })
+    const responseBody = { ok: true, escrow: getEscrow(escrow.id) }
+    cacheResponse(idempotencyKey, 200, responseBody)
+    return NextResponse.json(responseBody)
   }
 
   return NextResponse.json({ error: 'Unsupported' }, { status: 400 })
