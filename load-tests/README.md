@@ -44,12 +44,60 @@ load-tests/
 └── README.md
 ```
 
-## Running Tests
+## Running Tests Locally
+
+Load tests hit a running instance of the app, so start the services first — k6 does not
+boot them for you.
+
+1. **Start the Next.js frontend** (in one terminal, from the repo root):
+   ```bash
+   pnpm dev
+   # Ready on http://localhost:3000
+   ```
+
+2. **Start the Rust backend** (in a second terminal), if the scenario you're running
+   touches `rust-api.test.js` or any endpoint proxied to it:
+   ```bash
+   cd backend && cargo run
+   # Listening on http://localhost:3001
+   ```
+
+3. **Have a test user available.** Auth-flow scenarios (`auth.test.js`, and anything
+   using `getSessionCookie()` from `helpers/auth.js`) log in with credentials from the
+   `TEST_EMAIL` / `TEST_PASSWORD` env vars, defaulting to `test@example.com` /
+   `TestPassword123!` (see [Environment Variables](#environment-variables) below). Seed
+   a user with those credentials in your local database, or pass your own via `-e`.
+
+4. **Run a test** (in a third terminal, from the repo root):
+   ```bash
+   k6 run load-tests/smoke.test.js
+   ```
+
+   A healthy run ends with a summary like this — all checks near 100% and thresholds
+   marked with a checkmark:
+   ```
+   █ THRESHOLDS
+
+     checks
+     ✓ 'rate>0.95' rate=100.00%
+
+     http_req_duration
+     ✓ 'p(95)<500' p(95)=42.3ms
+     ✓ 'p(99)<1000' p(99)=78.1ms
+
+   █ TOTAL RESULTS
+
+     checks_total.......: 48      9.6/s
+     checks_succeeded...: 100.00% 48 out of 48
+     checks_failed......: 0.00%   0 out of 48
+   ```
+   If `checks_failed` is non-zero or a threshold shows a ✗, re-check that both services
+   from steps 1–2 are running and reachable at the URLs in
+   [Environment Variables](#environment-variables).
+
+### Other Test Types
 
 ```bash
-# Smoke test — quick sanity check
-k6 run load-tests/smoke.test.js
-
 # Individual service tests
 k6 run load-tests/scenarios/bounties.test.js
 k6 run load-tests/scenarios/creators.test.js
@@ -67,6 +115,10 @@ k6 run -e BASE_URL=https://staging.example.com load-tests/smoke.test.js
 # With HTML report (requires k6-reporter)
 k6 run --out json=results.json load-tests/smoke.test.js
 ```
+
+Or via the pnpm shortcuts defined in `package.json` (e.g. `pnpm run load:smoke`,
+`pnpm run load:stress`, `pnpm run load:auth`) — see the `load:*` scripts there for the
+full list, one per scenario.
 
 ## Environment Variables
 
